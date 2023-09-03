@@ -10,6 +10,8 @@ mod tls;
 mod unix;
 
 pub use super::service::Routes;
+pub use super::service::RoutesBuilder;
+
 pub use crate::server::NamedService;
 pub use conn::{Connected, TcpConnectInfo};
 #[cfg(feature = "tls")]
@@ -36,7 +38,6 @@ use self::recover_error::RecoverError;
 use super::service::{GrpcTimeout, ServerIo};
 use crate::body::BoxBody;
 use bytes::Bytes;
-use futures_util::{future, ready};
 use http::{Request, Response};
 use http_body::Body as _;
 use hyper::{server::accept, Body};
@@ -44,12 +45,12 @@ use pin_project::pin_project;
 use std::{
     convert::Infallible,
     fmt,
-    future::Future,
+    future::{self, Future},
     marker::PhantomData,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
     time::Duration,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -391,6 +392,17 @@ impl<L> Server<L> {
         Router::new(self.clone(), routes)
     }
 
+    /// Create a router with given [`Routes`].
+    ///
+    /// This will clone the `Server` builder and create a router that will
+    /// route around different services that were already added to the provided `routes`.
+    pub fn add_routes(&mut self, routes: Routes) -> Router<L>
+    where
+        L: Clone,
+    {
+        Router::new(self.clone(), routes)
+    }
+
     /// Set the [Tower] [`Layer`] all services will be wrapped in.
     ///
     /// This enables using middleware from the [Tower ecosystem][eco].
@@ -645,8 +657,10 @@ impl<L> Router<L> {
             .await
     }
 
-    /// Consume this [`Server`] creating a future that will execute the server on
-    /// the provided incoming stream of `AsyncRead + AsyncWrite`.
+    /// Consume this [`Server`] creating a future that will execute the server
+    /// on the provided incoming stream of `AsyncRead + AsyncWrite`.
+    ///
+    /// This method discards any provided [`Server`] TCP configuration.
     ///
     /// [`Server`]: struct.Server.html
     pub async fn serve_with_incoming<I, IO, IE, ResBody>(
@@ -674,10 +688,12 @@ impl<L> Router<L> {
             .await
     }
 
-    /// Consume this [`Server`] creating a future that will execute the server on
-    /// the provided incoming stream of `AsyncRead + AsyncWrite`. Similar to
+    /// Consume this [`Server`] creating a future that will execute the server
+    /// on the provided incoming stream of `AsyncRead + AsyncWrite`. Similar to
     /// `serve_with_shutdown` this method will also take a signal future to
     /// gracefully shutdown the server.
+    ///
+    /// This method discards any provided [`Server`] TCP configuration.
     ///
     /// [`Server`]: struct.Server.html
     pub async fn serve_with_incoming_shutdown<I, IO, IE, F, ResBody>(
